@@ -4274,66 +4274,273 @@ IntentClassifier(의도 분석 + 라우팅)
 
 #### 5.1 MCP(Model Context Protocol) 개요
 
-- 정의 및 발전 배경
-  - **Model Context Protocol(MCP)**은 Anthropic이 2024년 11월에 공개한 오픈 표준(OSS) 프로토콜이며, AI 모델(LLM)과 외부 시스템 간 표준화된 연결을 제공하는 통신 프로토콜입니다.
-  - USB-C 포트처럼, AI 애플리케이션이 다양한 도구와 데이터 소스로 동일한 방식으로 연결 가능하게 해주는 범용 인터페이스
-  - 기존의 N×M 개별 통합을 MCP 하나의 인터페이스로 대체해 확장성과 유지보수성을 향상시킵니다
+**간단한 정의:** AI가 외부 도구(Notion, Slack, GitHub 등)를 사용하기 위한 범용 연결 규격
+
+**일상 비유: USB-C의 혁명**
+
+```
+옛날 (USB-C 이전)
+┌─────────────────────────────────────┐
+│ 출장 짐가방                          │
+│ ├─ 갤럭시 전용 충전기                │
+│ ├─ 아이폰 라이트닝 케이블            │
+│ ├─ 노트북 전용 어댑터                │
+│ ├─ 헤드폰 3.5mm 잭                   │
+│ └─ 카메라 충전기                     │
+│                                     │
+│ 문제: 충전기만 5개...               │
+└─────────────────────────────────────┘
+
+지금 (USB-C 시대)
+┌─────────────────────────────────────┐
+│ 출장 짐가방                          │
+│ └─ USB-C 케이블 하나면 끝!          │
+│                                     │
+│ ✓ 갤럭시, 아이폰, 노트북, 헤드폰    │
+│ ✓ 새 기기도 USB-C만 있으면 OK       │
+└─────────────────────────────────────┘
+```
+
+**AI 세상도 똑같은 문제가 있었음:**
+
+```
+옛날 (MCP 이전 - 각 AI 앱마다 개별 연동)
+┌─────────────────────────────────────────────┐
+│ Claude 앱 개발                               │
+│ ├─ Notion API 연동 코드 100줄               │
+│ ├─ Slack API 연동 코드 100줄                │
+│ ├─ GitHub API 연동 코드 100줄               │
+│ └─ Google Drive API 연동 코드 100줄         │
+│ = 총 400줄 + 4개 API 문서 공부              │
+└─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────┐
+│ ChatGPT 앱 개발                              │
+│ ├─ 또 Notion API 연동 코드 100줄            │
+│ ├─ 또 Slack API 연동 코드 100줄             │
+│ ├─ 또 GitHub API 연동 코드 100줄            │
+│ └─ 또 Google Drive API 연동 코드 100줄      │
+│ = 또 400줄... (중복 작업)                   │
+└─────────────────────────────────────────────┘
+
+문제: N개 AI 앱 × M개 도구 = N×M개의 연동 코드
+→ 3개 AI 앱 × 5개 도구 = 15개 연동 코드 작성
+
+
+지금 (MCP 시대 - 표준 연결 규격)
+┌─────────────────────────────────────────────┐
+│ Claude, ChatGPT, 내 AI 앱                    │
+│ └─ MCP만 지원하면 모든 도구 즉시 사용!      │
+└─────────────────────────────────────────────┘
+         ↓ (MCP 표준 통신)
+┌─────────────────────────────────────────────┐
+│ Notion, Slack, GitHub, Google Drive          │
+│ └─ MCP Server만 제공하면 모든 AI가 사용!    │
+└─────────────────────────────────────────────┘
+
+해결: N개 AI 앱 + M개 도구 = N+M개만 구현
+→ 3개 AI 앱 + 5개 도구 = 8개만 구현 (거의 절반!)
+```
 
 ![N×M 인터페이스 시각화](./assets/N×M-interface.png)
 
-  - Language Server Protocol(LSP)의 메시지 흐름 아이디어를 의도적으로 재사용하며, JSON-RPC 2.0 위에서 전송됩니다
+**개발자 관점: 코드로 보는 극적인 차이**
 
-- 왜 MCP가 필요한가?
+**시나리오:** AI 챗봇이 Notion, Slack, GitHub 3개 도구를 사용하도록 만들기
 
-  **기존 방식의 문제점**
+**MCP 없이 직접 구현 (400줄 지옥):**
 
-  - AI 애플리케이션마다 각 외부 도구와 개별적으로 연동 구현 필요
-  - 예시: Claude 앱이 Notion, Slack, GitHub, Google Drive와 연동하려면?
-    - Notion API 연동 코드 작성
-    - Slack API 연동 코드 작성
-    - GitHub API 연동 코드 작성
-    - Google Drive API 연동 코드 작성
-  - **문제**: N개 AI 앱 × M개 도구 = N×M개의 개별 연동 코드 필요
-  - 결과: 유지보수 지옥, 중복 코드, 확장 어려움
+```python
+# 1. Notion API 연동 (100줄)
+import notion_client
+notion = notion_client.Client(auth=os.getenv("NOTION_TOKEN"))
 
-  **MCP 방식의 해결책**
+def get_notion_page(page_id):
+    try:
+        response = notion.pages.retrieve(page_id=page_id)
+        # 인증, 페이징, 에러 처리, 재시도 로직...
+        # 데이터 파싱, 타입 변환...
+        return response
+    except APIResponseError as e:
+        # 에러 핸들링 20줄...
+    # ... 총 100줄
 
-  - 각 도구는 **MCP 서버 하나만** 구현
-  - 각 AI 앱은 **MCP 클라이언트 하나만** 구현
-  - N개 AI 앱 × M개 도구 = **N + M개의 구현**으로 축소
-  - 새 도구 추가 시: MCP 서버만 만들면 모든 AI 앱에서 즉시 사용 가능
-  - 새 AI 앱 추가 시: MCP 클라이언트만 구현하면 모든 도구 즉시 사용 가능
+# 2. Slack API 연동 (100줄)
+from slack_sdk import WebClient
+slack = WebClient(token=os.getenv("SLACK_TOKEN"))
 
-  **핵심 가치**
+def send_slack_message(channel, text):
+    try:
+        response = slack.chat_postMessage(channel=channel, text=text)
+        # 인증, 채널 검증, 에러 처리...
+        return response
+    except SlackApiError as e:
+        # 에러 핸들링 20줄...
+    # ... 총 100줄
 
-  - **재사용성**: 한 번 만든 MCP 서버를 모든 AI 앱에서 사용
-  - **표준화**: 모든 연동이 동일한 방식으로 작동
-  - **확장성**: 새로운 도구/앱 추가가 간단함
-  - **유지보수성**: 변경 사항이 한 곳에만 반영되면 됨
+# 3. GitHub API 연동 (100줄)
+from github import Github
+gh = Github(os.getenv("GITHUB_TOKEN"))
 
-- 주요 플랫폼 채택 현황 및 생태계 확장
+def create_github_issue(repo_name, title, body):
+    try:
+        repo = gh.get_repo(repo_name)
+        issue = repo.create_issue(title=title, body=body)
+        # 인증, 권한 확인, 에러 처리...
+        return issue
+    except GithubException as e:
+        # 에러 핸들링 20줄...
+    # ... 총 100줄
 
-  **주요 AI 플랫폼**
+# 4. AI가 상황에 맞게 도구 선택하는 로직 (100줄)
+def handle_user_request(user_input):
+    # LLM에게 어떤 도구 사용할지 물어보기
+    # 각 도구별 파라미터 추출
+    # 순서대로 실행하고 결과 통합
+    # 에러 발생 시 재시도...
+    # ... 100줄
 
-  - **OpenAI**: 2025년 3월 공식 채택 발표. Agents SDK, ChatGPT 데스크톱 앱, Responses API에 MCP 지원 통합
-  - **Google DeepMind**: 2025년 4월 Gemini 모델과 SDK에 MCP 지원 추가 발표. CEO Demis Hassabis는 "AI 에이전트 시대의 급속히 성장하는 오픈 표준"이라고 언급
-  - **Microsoft**: Copilot Studio와 Azure AI Foundry에서 MCP 지원
+# 총 400줄 + Notion/Slack/GitHub API 문서 3개 숙지 필요
+# 각 API 인증 방식, 제한(rate limit), 에러 코드 모두 학습
+# 유지보수: Slack API 변경되면 100줄 다시 수정
+```
 
-  **MCP 생태계의 폭발적 성장**
+**MCP로 구현 (3줄로 끝):**
 
-  - 2025년 2월 기준 **1,000개 이상의 MCP 서버** 존재
-  - 주요 자동화/통합 플랫폼: Zapier(30,000+ 액션), Make.com, n8n
-  - 엔터프라이즈 서비스: AWS(Lambda, ECS, EKS), Block(60개 이상 MCP 서버), Asana
-  - 개발 도구: Replit, Sourcegraph, Codeium, Zed
-  - 대부분의 SaaS 서비스가 MCP 서버를 제공하거나 준비 중
+```python
+# 1. MCP 클라이언트 초기화
+from mcp import Client
 
-  **실무적 의미**
+client = Client()
 
-  - 개발자는 **직접 API 연동 코드를 작성할 필요 없이**, MCP 서버만 연결하면 즉시 사용 가능
-  - 예시: Notion, Slack, GitHub, Google Drive 등을 코드 없이 AI 앱에 통합
-  - 실제로 워크플로우 자동화 플랫폼인 **n8n, Make.com도 MCP를 통해 서비스 간 연결**
-    - AI 에이전트가 MCP로 n8n 워크플로우를 트리거하고, n8n이 다시 MCP로 외부 도구 호출
-    - 복잡한 통합 작업을 코드 없이 구성 가능
+# 2. MCP 서버들 연결 (각 1줄!)
+client.connect_to_server("notion")   # Notion MCP Server
+client.connect_to_server("slack")    # Slack MCP Server
+client.connect_to_server("github")   # GitHub MCP Server
+
+# 끝! 이제 AI가 알아서 필요한 도구 선택해서 사용
+# - 인증? MCP Server가 처리
+# - 에러 핸들링? MCP Server가 처리
+# - API 변경? MCP Server만 업데이트하면 됨
+# - 새 도구 추가? client.connect_to_server("jira") 한 줄 추가
+
+# 사용 예시
+response = client.call_tool("notion", "get_page", {"page_id": "123"})
+client.call_tool("slack", "send_message", {"channel": "#dev", "text": "Done!"})
+```
+
+**핵심 차이:**
+- **직접 구현**: 400줄 + 3개 API 문서 공부 + 유지보수 지옥
+- **MCP**: 3줄 + 새 도구 추가도 1줄
+
+**MCP의 3가지 핵심 구성 요소 (쉽게 이해하기)**
+
+```
+┌──────────────────────────────────────────────┐
+│ 1. MCP Host (= AI 애플리케이션)              │
+│    역할: 사용자 요청 받아서 "어떤 도구       │
+│          필요한지" 판단                      │
+│    예시: Claude Desktop, ChatGPT,            │
+│          내가 만든 AI 챗봇                   │
+│    비유: 레스토랑 홀 매니저                  │
+│                                              │
+│  ┌────────────────────────────────────┐     │
+│  │ 2. MCP Client (= 통역사)           │     │
+│  │    역할: Host와 Server 사이 대화 중개│     │
+│  │    위치: Host 내부에 포함           │     │
+│  │    비유: 주문서 전달하는 웨이터     │     │
+│  │    ※ SDK가 알아서 처리해줌         │     │
+│  └────────────────────────────────────┘     │
+└──────────────────────────────────────────────┘
+              ↓ MCP 표준 통신
+┌──────────────────────────────────────────────┐
+│ 3. MCP Server (= 도구 제공자)                │
+│    역할: 실제 기능 제공                      │
+│         (Notion 읽기/쓰기, Slack 메시지)     │
+│    예시: Notion MCP Server, Slack MCP Server │
+│    비유: 주방 (음식 만드는 곳)               │
+└──────────────────────────────────────────────┘
+```
+
+**간단 정리:** **AI 앱(Host)이 도구(Server)를 쓰고 싶으면 MCP로 연결!**
+
+**왜 이게 AI 개발의 혁명인가?**
+
+| 상황                  | MCP 없이                             | MCP로                                | 차이      |
+| --------------------- | ------------------------------------ | ------------------------------------ | --------- |
+| **3개 AI 앱 × 5개 도구** | 15개 연동 코드 작성                  | 8개만 작성 (AI 3 + 도구 5)           | 거의 절반 |
+| **새 도구 추가 (Jira)** | 모든 AI 앱 수정 (3군데)              | Jira MCP Server만 추가 (1군데)       | 3배 효율  |
+| **Notion API 변경**   | 모든 AI 앱의 Notion 코드 수정        | Notion MCP Server만 수정             | 중복 제거 |
+| **개발자 학습 부담**  | Notion + Slack + GitHub API 문서     | MCP 하나만                           | 3개 → 1개 |
+| **유지보수**          | 각 AI 앱마다 개별 수정               | MCP Server 한 곳만 수정              | 통합 관리 |
+| **신규 AI 앱 개발**   | 모든 도구 연동 코드 처음부터 다시 작성 | MCP만 지원하면 모든 도구 즉시 사용   | 즉시 활용 |
+
+**2025년 현재: MCP 생태계의 폭발적 성장**
+
+**주요 AI 플랫폼 모두 채택 (= 사실상 표준)**
+
+- **Anthropic**: 2024년 11월 MCP 공개 (창시자)
+- **OpenAI**: 2025년 3월 공식 채택 - Agents SDK, ChatGPT 데스크톱에 통합
+- **Google DeepMind**: 2025년 4월 Gemini에 MCP 지원 추가
+  - CEO Demis Hassabis: "AI 에이전트 시대의 오픈 표준"
+- **Microsoft**: Copilot Studio, Azure AI Foundry에서 MCP 지원
+
+**의미: MCP 모르면 AI 개발 못하는 시대 도래**
+
+**MCP Server 생태계 (2025년 2월 기준)**
+
+- **1,000개 이상의 MCP 서버 존재**
+  - SaaS: Notion, Slack, GitHub, Google Drive, Jira, Asana, Trello...
+  - 워크플로우: Zapier(30,000+ 액션), Make.com, n8n
+  - 클라우드: AWS Lambda/ECS/EKS, Block(60개 이상)
+  - 개발툴: Replit, Sourcegraph, Codeium, Zed
+
+**실무적 의미: "코드 없이" AI 통합 가능**
+
+```
+개발자: "AI 챗봇에 Notion 연동하고 싶은데..."
+
+MCP 이전:
+1. Notion API 문서 읽기 (2시간)
+2. 인증 구현 (1시간)
+3. 데이터 파싱/에러 처리 코딩 (3시간)
+4. 테스트 (1시간)
+= 총 7시간
+
+MCP 이후:
+1. Notion MCP Server 설치: npm install @modelcontextprotocol/server-notion
+2. 설정 파일에 추가 (3줄)
+3. 완료!
+= 총 5분
+```
+
+**고급 활용: MCP + 워크플로우 자동화**
+
+```
+AI 에이전트 (MCP Host)
+    ↓ MCP 통신
+n8n/Make.com (MCP Server 역할도 함)
+    ↓ MCP 통신
+30,000개 이상의 SaaS 서비스
+
+예시 시나리오:
+1. AI: "고객 문의를 Notion에 정리하고, Slack에 알리고, Jira 티켓 생성해줘"
+2. AI → MCP → n8n 워크플로우 트리거
+3. n8n이 Notion/Slack/Jira를 순차적으로 실행
+4. 결과를 MCP로 AI에게 반환
+
+→ 복잡한 통합 작업을 "대화"로 해결
+```
+
+**핵심 요약**
+
+| 핵심 개념      | 설명                                                      |
+| -------------- | --------------------------------------------------------- |
+| **MCP란?**     | AI와 외부 도구를 연결하는 USB-C 같은 표준 규격           |
+| **왜 혁명?**   | N×M 개별 연동 → N+M 표준 연동 (개발 시간 1/10 수준)      |
+| **누가 쓰나?** | OpenAI, Google, Microsoft 등 모든 주요 AI 플랫폼          |
+| **실무 효과**  | 400줄 코딩 → 3줄 설정, API 문서 3개 → MCP 하나만         |
+| **2025년 현재** | 1,000개 이상 MCP Server, 사실상 AI 개발 필수 기술        |
 
 ---
 
