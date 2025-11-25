@@ -1,0 +1,3 @@
+교재 : https://github.com/parkseohuinim/lecture
+
+API KEY : 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
